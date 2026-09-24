@@ -1,7 +1,7 @@
 GO      ?= go
 BINARY  ?= bin/newapi-checkin
 
-.PHONY: build test vet fmt run-once probe docker-build docker-up docker-logs clean
+.PHONY: build test vet fmt check run-once probe docker-build docker-up docker-logs clean
 
 # 本地编译到 bin/newapi-checkin
 build:
@@ -13,6 +13,18 @@ test:
 
 vet:
 	$(GO) vet ./...
+
+# 与 GitHub Actions 的 CI 等价的一键校验（gofmt + vet + test -race）
+check:
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "以下文件未格式化（运行 make fmt 修复）："; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi; \
+	echo "gofmt OK"
+	$(GO) vet ./...
+	$(GO) test -race ./...
 
 fmt:
 	$(GO) fmt ./...
