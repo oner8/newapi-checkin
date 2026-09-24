@@ -229,6 +229,30 @@ sites:
 			contains: "重复",
 		},
 		{
+			name: "proxy 缺少协议",
+			body: `
+sites:
+  - name: demo
+    base_url: https://a.example.com
+    enabled: true
+    proxy: 127.0.0.1:7890
+    credential: {type: cookie, cookie: session=x}
+`,
+			contains: "proxy",
+		},
+		{
+			name: "proxy 协议不支持",
+			body: `
+sites:
+  - name: demo
+    base_url: https://a.example.com
+    enabled: true
+    proxy: ftp://127.0.0.1:21
+    credential: {type: cookie, cookie: session=x}
+`,
+			contains: "proxy",
+		},
+		{
 			name: "checkin_status 取值非法",
 			body: `
 sites:
@@ -458,5 +482,19 @@ func TestSiteCheckinPathNormalized(t *testing.T) {
 	}
 	if got := cfg.Sites[0].CheckinStatus; got != CheckinStatusOff {
 		t.Errorf("checkin_status 应统一小写为 off，实际 %q", got)
+	}
+}
+
+// TestSiteProxyEnvExpansion 覆盖 sites[].proxy 支持 ${ENV} 注入（代理常带凭据，不该写进配置文件）。
+func TestSiteProxyEnvExpansion(t *testing.T) {
+	t.Setenv("TEST_PROXY_URL", "socks5://user:pw@127.0.0.1:1080")
+	body := strings.Replace(minimalSite, "    credential:\n", "    proxy: ${TEST_PROXY_URL}\n    credential:\n", 1)
+
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if got := cfg.Sites[0].Proxy; got != "socks5://user:pw@127.0.0.1:1080" {
+		t.Errorf("proxy 应从环境变量注入，实际 %q", got)
 	}
 }

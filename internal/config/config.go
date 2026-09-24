@@ -9,6 +9,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -122,6 +123,9 @@ type Site struct {
 	// CheckinStatus 控制是否预查当月签到状态：auto（默认）| off。
 	// 站点没有签到状态接口时写 off，可以省掉每天一次注定失败的查询请求。
 	CheckinStatus string `yaml:"checkin_status"`
+	// Proxy 是该站点专用的代理，留空则沿用环境变量（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）。
+	// 支持 http:// 、https:// 、socks5://（可带凭据，例如 socks5://user:pass@127.0.0.1:1080）。
+	Proxy string `yaml:"proxy"`
 }
 
 // Credential 是站点凭据。
@@ -253,6 +257,7 @@ func (c *Config) expandEnv() error {
 			target{prefix + ".credential.cookie", &s.Credential.Cookie},
 			target{prefix + ".credential.token", &s.Credential.Token},
 			target{prefix + ".credential.new_api_user", &s.Credential.NewAPIUser},
+			target{prefix + ".proxy", &s.Proxy},
 		)
 	}
 
@@ -507,6 +512,19 @@ func (c *Config) Validate() error {
 		case CheckinStatusAuto, CheckinStatusOff:
 		default:
 			add("%s.checkin_status 只能是 auto 或 off，当前为 %q", label, s.CheckinStatus)
+		}
+		if strings.TrimSpace(s.Proxy) != "" {
+			u, err := url.Parse(strings.TrimSpace(s.Proxy))
+			switch {
+			case err != nil || u.Host == "":
+				add("%s.proxy 无法解析，需形如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080，当前为 %q", label, s.Proxy)
+			default:
+				switch strings.ToLower(u.Scheme) {
+				case "http", "https", "socks5", "socks5h":
+				default:
+					add("%s.proxy 只支持 http / https / socks5，当前协议为 %q", label, u.Scheme)
+				}
+			}
 		}
 		if !s.Enabled {
 			continue

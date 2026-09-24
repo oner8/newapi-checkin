@@ -192,6 +192,62 @@ SITE_EXAMPLE_B_TOKEN=sk-...
 - 改了 `.env` 需要 `docker compose up -d` 重建容器；只改 `config.yaml`（挂载文件）则 `restart` 即可生效。
 
 
+## 站点需要代理
+
+有的站点直连不通（被墙、或只在特定网络可达），两种做法：
+
+**1）全局：环境变量**（最省事）——写进 `.env`，容器通过 compose 的 `env_file` 读到：
+
+```bash
+HTTPS_PROXY=http://host.docker.internal:7890
+HTTP_PROXY=http://host.docker.internal:7890
+# 不需要走代理的站点用 NO_PROXY 排除（逗号分隔，支持域名后缀）
+NO_PROXY=api.example.com,another.example.net
+```
+
+**2）按站点：`sites[].proxy`**（推荐，出口可控、互不影响）：
+
+```yaml
+  - name: 需要梯子的站
+    base_url: https://blocked.example.com
+    enabled: true
+    proxy: ${SITE_BLOCKED_PROXY}   # 建议从环境变量注入，代理凭据不进配置文件
+    credential:
+      type: access_token
+      token: ${SITE_BLOCKED_TOKEN}
+```
+
+```bash
+# .env：支持 http:// 、https:// 、socks5://（可带用户名密码）
+SITE_BLOCKED_PROXY=socks5://user:pass@127.0.0.1:1080
+```
+
+- 留空 = 沿用环境变量；两者都配时**站点自己的 `proxy` 优先**。
+- `socks5://` 时域名由代理解析（适合本机 Clash/mihomo 的 socks 端口）。
+- `--probe --site X` 会回显该站生效的代理（凭据打码），运行日志里也有 `proxy=` 字段。
+- 代理写错（缺协议 / 协议不支持）会在**配置校验**阶段直接报错，不会静默直连。
+
+### 容器里怎么填宿主机的代理
+
+容器里的 `127.0.0.1` 是**容器自己**，不是宿主机。要连宿主机上的代理：
+
+- 本仓库的 `docker-compose.yml` 已加 `extra_hosts: host.docker.internal:host-gateway`，直接写
+  `http://host.docker.internal:7890` 即可（Linux 上同样生效）；
+- 或用宿主机局域网 IP（如 `http://192.168.1.10:7890`）；
+- 或用 Docker 网关地址（默认 bridge 为 `172.17.0.1`，compose 自建网络通常是 `172.18.0.1`，可用 `docker network inspect` 确认）。
+
+> **容器连不上宿主机代理的两个常见原因**：
+> 1. **代理只监听 `127.0.0.1`**（Clash/mihomo 默认 `allow-lan: false`）——那容器无论用 `host.docker.internal` 还是宿主机 IP 都连不上。要么打开 `allow-lan` / 让它监听 `0.0.0.0`，要么把代理也跑成容器并加入同一个 docker 网络（用服务名访问）。
+> 2. **宿主机防火墙拦住了 docker 网段到宿主端口的访问**（本机实测：ufw 默认策略下，容器访问 `172.18.0.1:<端口>` 会超时）。放行即可，例如 `sudo ufw allow from 172.17.0.0/16 to any port 7890 proto tcp`（网段用 `docker network inspect` 确认）。
+>
+> 自测一条命令：在容器里执行 `docker compose exec newapi-checkin wget -qO- http://host.docker.internal:7890` —— 能拿到代理的响应（哪怕是错误页）就是通的，超时则是上面两种情况之一。
+
+### 注意：代理会改变出口 IP
+
+阿里云 WAF 的 `acw_sc__v2`、Cloudflare 的 `cf_clearance` 这类通行 Cookie **与出口 IP + User-Agent 绑定**。
+若某站要走代理，那么**取通行 Cookie 时也要从同一个出口**（浏览器同样走那条代理），否则会一直被挑战；
+换节点/出口变化后需要重新取一次。
+
 ## 使用 `--probe` 诊断
 
 `--probe` 只尝试「手头确实有材料的凭据组合」，没有材料的组合直接跳过：
@@ -397,6 +453,7 @@ SITE_XXX_COOKIE="session=…; acw_sc__v2=…; acw_tc=…"
 | 收到 `auth_failed` | Cookie / 令牌失效或过期 | 重新从浏览器取 `session` Cookie 或生成新的 PAT，更新对应环境变量 |
 | 收到 `need_turnstile` | 站点在签到接口上开了 Cloudflare Turnstile（`/api/status` 的 `turnstile_check=true`） | token 由浏览器 widget 生成、**一次性**、并随 `remoteip` 送 Cloudflare 校验，脚本无法自动通过；**换 PAT/换 Cookie 都没用**（`middleware.TurnstileCheck()` 挂在路由上，与凭据类型无关）。只能在浏览器手动签到，或请站点管理员关闭该开关。详见「常见问题」 |
 | 收到 `not_newapi` | `/api/status` 打不开或返回内容不像 new-api | 核对 `base_url` 是否正确（含 `https://`）、该地址是否真的是 new-api 站点 |
+| 只有某个站连不上、超时或被 WAF 拦，其他站正常 | 该站需要代理才能访问 | 给该站点单独配 `sites[].proxy`（容器内填宿主机代理用 `host.docker.internal`），详见「站点需要代理」 |
 | 日志出现 `已自动通过站点前置防护的 JS 挑战（acw_sc__v2）` | 站点前置 WAF 的挑战被自动求解（正常，无需处理） | 无需处理；想关闭自动求解设 `app.waf_challenge: off` |
 | 日志出现 `站点 /api/status 未声明签到开关，按开启处理并继续尝试` | 该 fork 的 `/api/status` 不返回 `checkin_enabled` | 正常，继续走签到；若随后报 404，说明该站确实没有签到接口 |
 | 日志出现 `站点没有可用的签到状态查询接口，跳过预查直接提交` | 该 fork 没有签到状态接口（auto 模式自动降级） | 正常降级；确认后可写 `checkin_status: off` 省掉这次请求 |

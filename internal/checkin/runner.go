@@ -68,6 +68,8 @@ type SiteResult struct {
 	// Response 是站点对关键请求的原始响应片段（提交签到，或判定"今日已签到"的那次状态查询），
 	// 便于在日志里直接看到站点到底回了什么。只用于日志与展示，不落库、也不进通知。
 	Response string `json:"response,omitempty"`
+	// Proxy 是该站点生效的代理（凭据已打码），便于排查"某个站走了哪条出口"。
+	Proxy string `json:"proxy,omitempty"`
 }
 
 // Summary 是一批签到的汇总。
@@ -297,6 +299,9 @@ func (r *Runner) RunReserved(ctx context.Context, opts RunOptions) (summary *Sum
 			if results[i].Response != "" {
 				fields = append(fields, "response", results[i].Response)
 			}
+			if results[i].Proxy != "" {
+				fields = append(fields, "proxy", results[i].Proxy)
+			}
 			r.log.Info("站点签到结果", fields...)
 		}(i, s)
 	}
@@ -381,6 +386,7 @@ func (r *Runner) attemptSite(ctx context.Context, s config.Site) SiteResult {
 		return res
 	}
 	res.Credential = client.Credential().Describe()
+	res.Proxy = client.ProxyDescription()
 
 	// 前置防护的 JS 挑战被自动通过时留一条日志：否则用户会以为站点没防护，
 	// 或者误以为是通过了别的手段（例如粘贴的 Cookie 还有效）。

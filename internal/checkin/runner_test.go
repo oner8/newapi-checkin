@@ -1192,3 +1192,27 @@ func TestRunForkWithoutCheckinFieldInStatus(t *testing.T) {
 		t.Errorf("额度应按余额差补齐，实际 %d", res.QuotaAwarded)
 	}
 }
+
+// TestRunWithSiteProxy 验证 sites[].proxy 被真正使用，并且出现在结果里（会进日志）。
+//
+// 技巧：把假站点本身当作代理 —— 请求会以「绝对 URI」形式打到它，而 ServeMux 仍按路径匹配，
+// 因此它照样正常应答；能跑通就说明请求确实走了代理这条路径。
+func TestRunWithSiteProxy(t *testing.T) {
+	fake := &fakeSite{checkinEnabled: true, award: 1000, quota: 100000}
+	srv := newFakeSiteServer(t, fake)
+	cfg := testConfig(t, srv.URL)
+	cfg.Sites[0].Proxy = srv.URL
+
+	runner, _ := newTestRunner(t, cfg, nil)
+	summary, err := runner.Run(context.Background(), RunOptions{Trigger: TriggerManual})
+	if err != nil {
+		t.Fatalf("Run 失败: %v", err)
+	}
+	res := summary.Results[0]
+	if res.Status != model.StatusSuccess {
+		t.Fatalf("配置代理后应仍能签到，实际 %s（%s）", res.Status, res.Message)
+	}
+	if res.Proxy != srv.URL {
+		t.Errorf("结果里应带上生效的代理，实际 %q", res.Proxy)
+	}
+}

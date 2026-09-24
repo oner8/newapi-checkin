@@ -18,6 +18,10 @@ services:
       # 只绑本机：GET /api/sites、/api/runs 不校验身份，暴露到局域网会泄露站点清单与最近签到结果。
       # 需要远程查看就放在带认证的反向代理后面（或给这两个接口也加上 admin_token）。
       - "127.0.0.1:8080:8080"
+    # 让容器内能解析 host.docker.internal 指向宿主机（Linux 上用 docker 网关实现），
+    # 便于把 sites[].proxy 写成 http://host.docker.internal:7890 这类形式。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]

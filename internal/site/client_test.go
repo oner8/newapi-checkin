@@ -3,10 +3,13 @@ package site
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -834,5 +837,241 @@ func TestStaleWAFCookieDroppedOnSolve(t *testing.T) {
 	}
 	if !strings.Contains(replay, "acw_sc__v2="+acwTestValue) {
 		t.Errorf("重放时应带算出的 acw_sc__v2: %s", replay)
+	}
+}
+
+// startSocks5Proxy 起一个最小可用的 SOCKS5 服务端（无认证、只支持 CONNECT），
+// 并把所有连接转发到 target —— 用于验证 sites[].proxy 的 socks5 分支真的能建立隧道。
+// 注意：它故意忽略客户端请求的目标地址，一律转发到 target，简化测试。
+func startSocks5Proxy(t *testing.T, target string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+
+				// 握手：VER NMETHODS METHODS...
+				head := make([]byte, 2)
+				if _, err := io.ReadFull(c, head); err != nil {
+					return
+				}
+				if _, err := io.ReadFull(c, make([]byte, head[1])); err != nil {
+					return
+				}
+				if _, err := c.Write([]byte{0x05, 0x00}); err != nil { // 无认证
+					return
+				}
+
+				// 请求：VER CMD RSV ATYP DST.ADDR DST.PORT
+				req := make([]byte, 4)
+				if _, err := io.ReadFull(c, req); err != nil {
+					return
+				}
+				if req[1] != 0x01 { // 只支持 CONNECT
+					return
+				}
+				switch req[3] {
+				case 0x01: // IPv4
+					if _, err := io.ReadFull(c, make([]byte, 4+2)); err != nil {
+						return
+					}
+				case 0x03: // 域名
+					l := make([]byte, 1)
+					if _, err := io.ReadFull(c, l); err != nil {
+						return
+					}
+					if _, err := io.ReadFull(c, make([]byte, int(l[0])+2)); err != nil {
+						return
+					}
+				default:
+					return
+				}
+
+				up, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				// 成功应答：VER REP RSV ATYP BND.ADDR BND.PORT
+				if _, err := c.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); err != nil {
+					return
+				}
+				go func() { _, _ = io.Copy(up, c) }()
+				_, _ = io.Copy(c, up)
+			}(conn)
+		}
+	}()
+
+	return "socks5://" + ln.Addr().String()
+}
+
+// TestHTTPSiteProxyIsUsed 验证 sites[].proxy 走 HTTP 代理：请求以绝对 URI 形式发给代理。
+func TestHTTPSiteProxyIsUsed(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.URL.String())
+		mu.Unlock()
+		writeJSON(w, map[string]any{
+			"success": true,
+			"data":    map[string]any{"version": "v1.0.0", "system_name": "proxy-test", "checkin_enabled": true},
+		})
+	}))
+	t.Cleanup(proxy.Close)
+
+	client, err := NewClient(Options{
+		Name:       "via-proxy",
+		BaseURL:    "http://site.invalid",
+		Credential: cookieCred(),
+		Timeout:    3 * time.Second,
+		Proxy:      proxy.URL,
+	})
+	if err != nil {
+		t.Fatalf("构造客户端失败: %v", err)
+	}
+
+	if _, err := client.Status(context.Background()); err != nil {
+		t.Fatalf("经 HTTP 代理应能取到 /api/status: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("代理应当收到 1 个请求，实际 %d 个: %v", len(seen), seen)
+	}
+	if !strings.Contains(seen[0], "http://site.invalid/api/status") {
+		t.Errorf("代理收到的应是绝对 URI 请求，实际 %q", seen[0])
+	}
+	if got := client.ProxyDescription(); got != proxy.URL {
+		t.Errorf("代理描述应为 %q，实际 %q", proxy.URL, got)
+	}
+}
+
+// TestSocks5SiteProxyIsUsed 验证 sites[].proxy 走 SOCKS5：隧道打通后仍能拿到 JSON。
+func TestSocks5SiteProxyIsUsed(t *testing.T) {
+	var hits int32
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		writeJSON(w, map[string]any{
+			"success": true,
+			"data":    map[string]any{"version": "v1.0.0", "system_name": "socks-test", "checkin_enabled": true},
+		})
+	}))
+	t.Cleanup(site.Close)
+
+	proxyURL := startSocks5Proxy(t, strings.TrimPrefix(site.URL, "http://"))
+	client, err := NewClient(Options{
+		Name:       "via-socks5",
+		BaseURL:    "http://site.invalid",
+		Credential: cookieCred(),
+		Timeout:    3 * time.Second,
+		Proxy:      proxyURL,
+	})
+	if err != nil {
+		t.Fatalf("构造客户端失败: %v", err)
+	}
+
+	if _, err := client.Status(context.Background()); err != nil {
+		t.Fatalf("经 SOCKS5 应能取到 /api/status: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("隧道另一端应当收到 1 个请求，实际 %d", got)
+	}
+	if got := client.ProxyDescription(); got != proxyURL {
+		t.Errorf("代理描述应为 %q，实际 %q", proxyURL, got)
+	}
+}
+
+func TestProxyCredentialsAreMasked(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"http 带凭据", "http://user:s3cret@127.0.0.1:7890", "http://user:***@127.0.0.1:7890"},
+		{"socks5 带凭据", "socks5://user:s3cret@127.0.0.1:1080", "socks5://user:***@127.0.0.1:1080"},
+		{"无凭据", "http://127.0.0.1:7890", "http://127.0.0.1:7890"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := NewClient(Options{
+				Name:       "mask",
+				BaseURL:    "http://site.invalid",
+				Credential: cookieCred(),
+				Timeout:    time.Second,
+				Proxy:      tc.raw,
+			})
+			if err != nil {
+				t.Fatalf("构造客户端失败: %v", err)
+			}
+			got := client.ProxyDescription()
+			if got != tc.want {
+				t.Errorf("代理描述 = %q，期望 %q", got, tc.want)
+			}
+			if strings.Contains(got, "s3cret") {
+				t.Errorf("代理密码不应出现在描述里: %q", got)
+			}
+		})
+	}
+}
+
+func TestProxyRejectsBadValues(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"缺少协议", "127.0.0.1:7890"},
+		{"协议不支持", "ftp://127.0.0.1:21"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewClient(Options{
+				Name:       "bad-proxy",
+				BaseURL:    "http://site.invalid",
+				Credential: cookieCred(),
+				Timeout:    time.Second,
+				Proxy:      tc.raw,
+			})
+			if err == nil {
+				t.Fatal("非法代理配置应当直接报错，而不是静默忽略")
+			}
+			if !strings.Contains(err.Error(), "proxy") {
+				t.Errorf("错误信息应当点明 proxy: %v", err)
+			}
+		})
+	}
+}
+
+// TestNoProxyKeepsEnvBehaviour 未配置 proxy 时不应改动传输层（保留 HTTP_PROXY/NO_PROXY 的环境变量行为）。
+func TestNoProxyKeepsEnvBehaviour(t *testing.T) {
+	client, err := NewClient(Options{
+		Name:       "env-proxy",
+		BaseURL:    "http://site.invalid",
+		Credential: cookieCred(),
+		Timeout:    time.Second,
+	})
+	if err != nil {
+		t.Fatalf("构造客户端失败: %v", err)
+	}
+	if got := client.ProxyDescription(); got != "" {
+		t.Errorf("未配置 proxy 时描述应为空，实际 %q", got)
+	}
+	tr, ok := client.hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("传输层应为 *http.Transport，实际 %T", client.hc.Transport)
+	}
+	if tr.Proxy == nil {
+		t.Error("未配置 proxy 时应保留 ProxyFromEnvironment（环境变量代理）")
 	}
 }

@@ -33,11 +33,13 @@ type ProbeResult struct {
 	// CheckinPath / CheckinStatus 回显该站点生效的签到接口设置，方便确认 fork 的配置有没有被读到。
 	CheckinPath   string
 	CheckinStatus string
-	Reachable     bool
-	Status        *Status
-	StatusErr     string
-	Combos        []ComboResult
-	Recommended   string
+	// Proxy 回显该站点生效的代理（凭据已打码）；为空表示未单独配置、沿用环境变量。
+	Proxy       string
+	Reachable   bool
+	Status      *Status
+	StatusErr   string
+	Combos      []ComboResult
+	Recommended string
 }
 
 // Probe 依次尝试多种凭据组合，找出哪一种能通过 /api/user/self。
@@ -57,6 +59,7 @@ func Probe(ctx context.Context, s config.Site, app config.App) ProbeResult {
 		result.StatusErr = err.Error()
 		return result
 	}
+	result.Proxy = client.ProxyDescription()
 
 	status, statusErr := client.Status(ctx)
 	if statusErr == nil {
@@ -159,6 +162,9 @@ func (r ProbeResult) Describe() string {
 		if r.Status.TurnstileCheck {
 			sb.WriteString("  注意: 站点开启了 Turnstile，纯脚本无法自动通过验证码，务必用长期有效的 Cookie/令牌\n")
 		}
+	}
+	if r.Proxy != "" {
+		fmt.Fprintf(&sb, "  代理: %s\n", r.Proxy)
 	}
 	if r.StatusErr != "" {
 		fmt.Fprintf(&sb, "  /api/status 探测失败: %s\n", r.StatusErr)

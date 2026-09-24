@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/proxy"
+
 	"newapi-checkin/internal/config"
 )
 
@@ -37,6 +39,9 @@ type Options struct {
 	CheckinPath string
 	// SolveWAF 为 true 时，遇到可离线求解的前置防护挑战（阿里云 acw_sc__v2）会自动算 Cookie 并重放。
 	SolveWAF bool
+	// Proxy 覆盖该站点的代理；为空时沿用环境变量（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）。
+	// 支持 http:// 、https:// 、socks5://（可带凭据）。
+	Proxy string
 	// HTTPClient 允许注入自定义客户端（测试用）。
 	HTTPClient *http.Client
 }
@@ -52,6 +57,7 @@ type Client struct {
 	checkinPath string
 	solveWAF    bool
 	solvedWAF   bool
+	proxyDesc   string
 }
 
 // NewClient 构造客户端。
@@ -93,25 +99,44 @@ func NewClient(opts Options) (*Client, error) {
 	// 自己持有 http.Client：需要挂 Cookie Jar —— 通过前置防护挑战后，服务端下发的 acw_tc /
 	// cdn_sec_tc 与算出来的 acw_sc__v2 都要在后续请求里带上。
 	jar, _ := cookiejar.New(nil)
-	hc := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: timeout,
-			MaxIdleConnsPerHost:   2,
-			ForceAttemptHTTP2:     true,
-		},
-		Jar: jar,
+
+	// 传输层：默认沿用环境变量里的代理（HTTP_PROXY / HTTPS_PROXY / NO_PROXY），
+	// 站点若单独配了 proxy 则覆盖它。
+	var transport http.RoundTripper = &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: timeout,
+		MaxIdleConnsPerHost:   2,
+		ForceAttemptHTTP2:     true,
 	}
+	if opts.HTTPClient != nil && opts.HTTPClient.Transport != nil {
+		// 尊重调用方注入的传输层（测试用），克隆一份以免改动调用方对象。
+		if injected, ok := opts.HTTPClient.Transport.(*http.Transport); ok {
+			transport = injected.Clone()
+		} else {
+			transport = opts.HTTPClient.Transport
+		}
+	}
+
+	proxyDesc := ""
+	if strings.TrimSpace(opts.Proxy) != "" {
+		t, ok := transport.(*http.Transport)
+		if !ok {
+			return nil, fmt.Errorf("站点 %s 配置了 proxy，但注入的传输层不是 *http.Transport，无法应用", opts.Name)
+		}
+		desc, perr := applyProxy(t, opts.Proxy, opts.Name)
+		if perr != nil {
+			return nil, perr
+		}
+		proxyDesc = desc
+	}
+
+	hc := &http.Client{Timeout: timeout, Transport: transport, Jar: jar}
 	if opts.HTTPClient != nil {
-		// 尊重调用方注入的客户端（测试用于控制超时/传输层），但 Cookie Jar 由我们持有。
+		// 尊重调用方注入的客户端（测试用于控制超时/重定向），但 Cookie Jar 由我们持有。
 		if opts.HTTPClient.Timeout > 0 {
 			hc.Timeout = opts.HTTPClient.Timeout
-		}
-		if opts.HTTPClient.Transport != nil {
-			hc.Transport = opts.HTTPClient.Transport
 		}
 		hc.CheckRedirect = opts.HTTPClient.CheckRedirect
 	}
@@ -132,6 +157,7 @@ func NewClient(opts Options) (*Client, error) {
 		hc:          hc,
 		checkinPath: checkinPath,
 		solveWAF:    opts.SolveWAF,
+		proxyDesc:   proxyDesc,
 	}, nil
 }
 
@@ -145,6 +171,7 @@ func NewClientFromSite(s config.Site, app config.App) (*Client, error) {
 		Timeout:     app.Timeout(),
 		CheckinPath: s.CheckinPath,
 		SolveWAF:    app.WAFChallenge != config.WAFChallengeOff,
+		Proxy:       s.Proxy,
 	})
 }
 
@@ -407,6 +434,69 @@ func stripCookie(h http.Header, name string) {
 		return
 	}
 	h.Set("Cookie", strings.Join(kept, "; "))
+}
+
+// ProxyDescription 返回该站点生效的代理描述（未配置时为空串；凭据已打码）。
+func (c *Client) ProxyDescription() string { return c.proxyDesc }
+
+// applyProxy 把站点专属代理应用到传输层，返回可安全展示的描述（凭据已打码）。
+//
+// 支持三类：
+//   - http:// / https://  —— 走标准的 HTTP 代理（CONNECT 隧道），可带 user:pass
+//   - socks5:// / socks5h:// —— 走 SOCKS5（x/net/proxy），主机名交给代理解析
+//
+// 未配置代理时不动传输层，保持 http.ProxyFromEnvironment 的环境变量行为。
+func applyProxy(transport *http.Transport, raw, siteName string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("站点 %s 的 proxy 无法解析: %w", siteName, err)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("站点 %s 的 proxy 缺少主机名（需形如 http://127.0.0.1:7890）", siteName)
+	}
+
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		transport.Proxy = http.ProxyURL(u)
+	case "socks5", "socks5h":
+		var auth *proxy.Auth
+		if u.User != nil {
+			pw, _ := u.User.Password()
+			auth = &proxy.Auth{User: u.User.Username(), Password: pw}
+		}
+		dialer, derr := proxy.SOCKS5("tcp", u.Host, auth, proxy.Direct)
+		if derr != nil {
+			return "", fmt.Errorf("站点 %s 的 socks5 代理初始化失败: %w", siteName, derr)
+		}
+		transport.Proxy = nil
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if cd, ok := dialer.(proxy.ContextDialer); ok {
+				return cd.DialContext(ctx, network, addr)
+			}
+			return dialer.Dial(network, addr)
+		}
+	default:
+		return "", fmt.Errorf("站点 %s 的 proxy 协议 %q 不支持（支持 http / https / socks5）", siteName, u.Scheme)
+	}
+	return maskProxyURL(u), nil
+}
+
+// maskProxyURL 生成可安全展示的代理描述：只保留协议、主机与用户名，密码打码。
+func maskProxyURL(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	if u.User != nil {
+		if _, hasPassword := u.User.Password(); hasPassword {
+			return fmt.Sprintf("%s://%s:***@%s", u.Scheme, u.User.Username(), u.Host)
+		}
+		return fmt.Sprintf("%s://%s@%s", u.Scheme, u.User.Username(), u.Host)
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // WAFSolved 表示本次会话里是否成功自动通过了前置防护挑战（供日志说明用）。

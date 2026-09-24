@@ -52,6 +52,7 @@ sites:
     # 部分 fork 改了签到接口路径（且没有状态查询接口）时用这两个字段；标准 new-api 不用写。
     # checkin_path: /api/user/sign_in   # 默认 /api/user/checkin；查状态与提交都用它
     # checkin_status: "off"             # 默认 auto（用 checkin_path 预查当月状态）；建议加引号
+    # proxy: ${SITE_EXAMPLE_PROXY}       # 该站专用代理；支持 http/https/socks5，留空则用环境变量
     credential:
       # cookie       适合较老的 new-api 与大部分 fork（需要 session Cookie）
       # access_token PAT，新版 new-api（v1.0.0-rc.x 起 / 上游 main）必须用这个：
