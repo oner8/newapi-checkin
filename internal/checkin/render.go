@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"newapi-checkin/internal/model"
-	"newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/notify"
 )
 
 // 通知里失败项的升级级别：失败需要能穿透 iOS 的专注模式。

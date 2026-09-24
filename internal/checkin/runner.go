@@ -15,11 +15,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"newapi-checkin/internal/config"
-	"newapi-checkin/internal/model"
-	"newapi-checkin/internal/notify"
-	"newapi-checkin/internal/scheduler"
-	"newapi-checkin/internal/site"
+	"github.com/oner8/newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/scheduler"
+	"github.com/oner8/newapi-checkin/internal/site"
 )
 
 // 批次触发来源。

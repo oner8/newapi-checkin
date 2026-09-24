@@ -1,11 +1,22 @@
 # 多阶段构建：编译期用 golang:1.25-alpine，运行期用精简的 alpine:3.20。
 # SQLite 驱动为纯 Go 实现，因此可以 CGO_ENABLED=0 静态编译。
+#
+# 可选构建参数（默认值面向国内网络，可用 --build-arg 覆盖）：
+#   GOPROXY       默认 https://goproxy.cn,direct —— 官方 proxy.golang.org 在部分网络下会超时
+#   GO_IMAGE      构建用基础镜像（国内可换镜像站，如 docker.m.daocloud.io/library/golang:1.25-alpine）
+#   RUNTIME_IMAGE 运行用基础镜像（同为 alpine:3.20 时可换镜像站）
+ARG GO_IMAGE=golang:1.25-alpine
+ARG RUNTIME_IMAGE=alpine:3.20
 
 # ---------- 构建阶段 ----------
-FROM golang:1.25-alpine AS build
+FROM ${GO_IMAGE} AS build
 
 # 版本号写入二进制（可用 --version 查看）；docker compose build --build-arg VERSION=1.2.3
 ARG VERSION=dev
+
+# Go 模块代理：默认用国内镜像，避免 go mod download 卡在官方源上超时。
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 
 WORKDIR /src
 
@@ -18,7 +29,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/newapi-checkin .
 
 # ---------- 运行阶段 ----------
-FROM alpine:3.20
+FROM ${RUNTIME_IMAGE}
 
 # 运行期必须的两个系统包（alpine 基础镜像两者都不含，缺了会导致容器跑不起来）：
 #   ca-certificates —— Go 使用系统证书池，缺失时所有 HTTPS 请求报

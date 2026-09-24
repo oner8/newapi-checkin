@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 // 凭据组合的标签。

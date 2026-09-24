@@ -2,6 +2,13 @@
 
 用 Go 编写的常驻服务：每天定时对多个 [new-api](https://github.com/Calcium-Ion/new-api)（one-api 的流行分支，OpenAI 兼容 API 中转面板）站点执行「每日签到」，结果写入 SQLite，并通过 **Bark（iOS 推送）** 通知。凭据（Cookie / 访问令牌）从环境变量注入，不落明文。
 
+> **免责声明 / Disclaimer**
+>
+> 本项目是**个人自用的自动化工具**，仅供学习与自用。使用前请确认你有权访问目标站点，并遵守其服务条款；
+> **请勿用于批量刷号、代签、转售或其他滥用行为**。项目中的部分能力（例如自动处理前置防护的 JS 挑战、
+> 为指定站点配置代理）请只在你有权访问的站点上使用。因使用本项目产生的一切后果（包括账号被封禁）
+> 由使用者自行承担。
+
 ## 特性
 
 - **多站点**：一次配置多个 new-api 站点，独立调度、并发执行。
@@ -547,6 +554,15 @@ Dockerfile 为多阶段构建：
 - 运行阶段额外安装 `ca-certificates` 与 `tzdata`。**alpine 基础镜像两者都不带**，缺了会分别导致：所有 HTTPS 请求报 `x509: certificate signed by unknown authority`（签到与 Bark 全废）、`time.LoadLocation("Asia/Shanghai")` 报 `unknown time zone` 使配置校验失败、**容器根本起不来**。这两个坑只有真正在容器里跑才会暴露。
 - healthcheck 用 busybox 的 wget：`wget -q --spider http://127.0.0.1:8080/healthz`。
 
+可选的构建参数（`docker compose build --build-arg X=Y` 或 `docker build --build-arg X=Y .`）：
+
+| 参数 | 默认值 | 用途 |
+| --- | --- | --- |
+| `GOPROXY` | `https://goproxy.cn,direct` | 官方 `proxy.golang.org` 在部分网络下会超时，故默认国内源 |
+| `GO_IMAGE` | `golang:1.25-alpine` | 构建用基础镜像，国内可换镜像站，如 `docker.m.daocloud.io/library/golang:1.25-alpine` |
+| `RUNTIME_IMAGE` | `alpine:3.20` | 运行用基础镜像，同上 |
+| `VERSION` | `dev` | 写入二进制的版本号（`--version` 可见）|
+
 `docker-compose.yml` 要点：服务名与容器名 `newapi-checkin`、镜像 `newapi-checkin:latest`、`build: .`、`env_file: .env`、`TZ=Asia/Shanghai`、挂载 `./config.yaml:/app/config.yaml:ro` 与 `./data:/data`、`ports: 127.0.0.1:8080:8080`（**只绑本机**，不暴露到局域网）、`restart: unless-stopped`、healthcheck。
 
 ```bash
@@ -567,6 +583,9 @@ make test   # go test ./...
 make vet    # go vet ./...
 make fmt    # go fmt ./...
 make build  # 本地编译到 bin/newapi-checkin
+
+# 也可以直接安装（模块路径即仓库地址）
+go install github.com/oner8/newapi-checkin@latest
 ```
 
 目录结构：

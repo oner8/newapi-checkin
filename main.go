@@ -13,13 +13,13 @@ import (
 	"syscall"
 	"time"
 
-	"newapi-checkin/internal/checkin"
-	"newapi-checkin/internal/config"
-	"newapi-checkin/internal/db"
-	"newapi-checkin/internal/notify"
-	"newapi-checkin/internal/scheduler"
-	"newapi-checkin/internal/server"
-	"newapi-checkin/internal/site"
+	"github.com/oner8/newapi-checkin/internal/checkin"
+	"github.com/oner8/newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/db"
+	"github.com/oner8/newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/scheduler"
+	"github.com/oner8/newapi-checkin/internal/server"
+	"github.com/oner8/newapi-checkin/internal/site"
 )
 
 // version 由构建时注入：-ldflags "-X main.version=x.y.z"。

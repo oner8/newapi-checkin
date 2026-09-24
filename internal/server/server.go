@@ -14,12 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"newapi-checkin/internal/checkin"
-	"newapi-checkin/internal/config"
-	"newapi-checkin/internal/model"
-	"newapi-checkin/internal/notify"
-	"newapi-checkin/internal/scheduler"
-	"newapi-checkin/internal/site"
+	"github.com/oner8/newapi-checkin/internal/checkin"
+	"github.com/oner8/newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/scheduler"
+	"github.com/oner8/newapi-checkin/internal/site"
 )
 
 // Service 是 HTTP 层依赖的服务能力（由 checkin.Service 实现）。

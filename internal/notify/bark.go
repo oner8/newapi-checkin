@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 // maxBarkBody 限制推送正文长度，避免超出 Bark 的服务端限制。

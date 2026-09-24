@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 // testBarkConfig 构造一份可用的 Bark 配置，server 由假服务端地址填充。

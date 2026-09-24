@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 // Credential 是实际发送给目标站的凭据。

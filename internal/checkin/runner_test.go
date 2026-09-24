@@ -16,11 +16,11 @@ import (
 
 	"gorm.io/gorm"
 
-	"newapi-checkin/internal/config"
-	"newapi-checkin/internal/db"
-	"newapi-checkin/internal/model"
-	"newapi-checkin/internal/notify"
-	"newapi-checkin/internal/site"
+	"github.com/oner8/newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/db"
+	"github.com/oner8/newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/site"
 )
 
 // fakeSite 是一个可控的假 new-api 站点，用来驱动 runner 的完整流程。

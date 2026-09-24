@@ -10,10 +10,10 @@ import (
 
 	"gorm.io/gorm"
 
-	"newapi-checkin/internal/config"
-	"newapi-checkin/internal/model"
-	"newapi-checkin/internal/notify"
-	"newapi-checkin/internal/scheduler"
+	"github.com/oner8/newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/scheduler"
 )
 
 // Service 是对外门面：定时循环、HTTP 接口、启动补跑都通过它触发批次。

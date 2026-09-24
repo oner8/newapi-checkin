@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 // defaultUserAgent 用浏览器 UA：不少中转站前面有 WAF/Cloudflare，默认 UA 会被直接拦掉。

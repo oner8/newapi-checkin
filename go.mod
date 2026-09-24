@@ -1,4 +1,4 @@
-module newapi-checkin
+module github.com/oner8/newapi-checkin
 
 go 1.25
 

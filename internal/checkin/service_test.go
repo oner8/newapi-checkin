@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/notify"
 )
 
 // TestBatchContextIsDecoupledFromSignals 验证后台批次使用的上下文与进程信号解耦、且有上界。

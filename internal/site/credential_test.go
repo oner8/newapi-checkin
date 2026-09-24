@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 func TestNormalizeCookie(t *testing.T) {

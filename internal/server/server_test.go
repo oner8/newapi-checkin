@@ -15,12 +15,12 @@ import (
 
 	"gorm.io/gorm"
 
-	"newapi-checkin/internal/checkin"
-	"newapi-checkin/internal/config"
-	"newapi-checkin/internal/db"
-	"newapi-checkin/internal/model"
-	"newapi-checkin/internal/notify"
-	"newapi-checkin/internal/scheduler"
+	"github.com/oner8/newapi-checkin/internal/checkin"
+	"github.com/oner8/newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/db"
+	"github.com/oner8/newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/notify"
+	"github.com/oner8/newapi-checkin/internal/scheduler"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"newapi-checkin/internal/model"
+	"github.com/oner8/newapi-checkin/internal/model"
 )
 
 // Open 打开（必要时创建）SQLite 数据库并执行建表。

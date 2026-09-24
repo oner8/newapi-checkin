@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"newapi-checkin/internal/config"
+	"github.com/oner8/newapi-checkin/internal/config"
 )
 
 // fakeAPI 是一个可控的假 new-api 站点。
