@@ -41,8 +41,9 @@ run-once:
 probe:
 	$(GO) run . --probe
 
+# 本地用源码构建镜像（compose 里不再带 build；发布时用带 --build-arg VERSION= 的那条 docker build）
 docker-build:
-	docker compose build
+	docker build -t ghcr.io/oner8/newapi-checkin:latest .
 
 docker-up:
 	docker compose up -d

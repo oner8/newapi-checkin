@@ -547,7 +547,7 @@ NAME      IMAGE             SERVICE   STATUS          PORTS
 newapi-checkin   newapi-checkin   newapi-checkin   Up (healthy)   127.0.0.1:8080->8080/tcp
 ```
 
-> 上表 IMAGE 列是当时（镜像名还是本地 `newapi-checkin`）的输出。现在镜像名由 `docker-compose.yml` 里的 `${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}` 决定，本地 `docker compose build` 会打上 `ghcr.io/oner8/newapi-checkin:latest` 这个标签。
+> 上表 IMAGE 列是当时（镜像名还是本地 `newapi-checkin`）的输出。现在镜像名由 `docker-compose.yml` 里的 `${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}` 决定，本地 `make docker-build`（即 `docker build -t ghcr.io/oner8/newapi-checkin:latest .`）会打上 `ghcr.io/oner8/newapi-checkin:latest` 这个标签。
 
 Dockerfile 为多阶段构建：
 
@@ -556,7 +556,7 @@ Dockerfile 为多阶段构建：
 - 运行阶段额外安装 `ca-certificates` 与 `tzdata`。**alpine 基础镜像两者都不带**，缺了会分别导致：所有 HTTPS 请求报 `x509: certificate signed by unknown authority`（签到与 Bark 全废）、`time.LoadLocation("Asia/Shanghai")` 报 `unknown time zone` 使配置校验失败、**容器根本起不来**。这两个坑只有真正在容器里跑才会暴露。
 - healthcheck 用 busybox 的 wget：`wget -q --spider http://127.0.0.1:8080/healthz`。
 
-可选的构建参数（`docker compose build --build-arg X=Y` 或 `docker build --build-arg X=Y .`）：
+可选的构建参数（`docker build --build-arg X=Y .`）：
 
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
@@ -565,18 +565,18 @@ Dockerfile 为多阶段构建：
 | `RUNTIME_IMAGE` | `alpine:3.20` | 运行用基础镜像，同上 |
 | `VERSION` | `dev` | 写入二进制的版本号（`--version` 可见）|
 
-`docker-compose.yml` 要点：服务名与容器名 `newapi-checkin`、镜像 `${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}`（默认从 GHCR 拉，`.env` 里可用 `IMAGE_TAG` 固定版本或回滚、用 `IMAGE_REPO` 换 registry）、`build: .`、`env_file: .env`、`TZ=Asia/Shanghai`、挂载 `./config.yaml:/app/config.yaml:ro` 与 `./data:/data`、`ports: 127.0.0.1:8080:8080`（**只绑本机**，不暴露到局域网）、`restart: unless-stopped`、healthcheck。
+`docker-compose.yml` 要点：服务名与容器名 `newapi-checkin`、镜像 `${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}`（默认从 GHCR 拉，`.env` 里可用 `IMAGE_TAG` 固定版本或回滚、用 `IMAGE_REPO` 换 registry）、`env_file: .env`、`TZ=Asia/Shanghai`、挂载 `./config.yaml:/app/config.yaml:ro` 与 `./data:/data`、`ports: 127.0.0.1:8080:8080`（**只绑本机**，不暴露到局域网）、`restart: unless-stopped`、`logging` 日志轮转、healthcheck（与镜像内置的一致，可省）。它**不含 `build`**：使用者只拿这一个文件就能 `docker compose up -d`，本地开发走 `make docker-build`。
 
 ```bash
 sudo install -d -o 10001 -g 10001 ./data   # 必须先建好（属主=容器内 uid 10001，见「快速开始」）
 
-# 本地开发：用源码构建后再启动
-docker compose build
+# 本地开发：用源码构建镜像后再启动
+docker build -t ghcr.io/oner8/newapi-checkin:latest .
 docker compose up -d
 
-# 服务器：不编译源码，只拉镜像（包若为私有，先 docker login ghcr.io）
+# 首次部署 / 升级：只拉镜像，不编译（镜像在 GHCR 上是公开的，无需 docker login）
 docker compose pull
-docker compose up -d --no-build
+docker compose up -d
 
 docker compose logs -f
 ```
@@ -584,6 +584,124 @@ docker compose logs -f
 > **Docker 部署下 `PANEL_TOKEN` 必须设置**：`POST /api/run` 在未配置令牌时「只允许 127.0.0.1」的判断依据是**请求来源 IP**，而容器看到的来源是网桥网关（例如 `172.18.0.1`），不是 `127.0.0.1`。所以即使端口只绑在本机，从宿主机 curl 触发也会被 403 拒绝。在 `.env` 里填上 `PANEL_TOKEN`，再用 `X-Admin-Token` 头调用即可（实测：正确令牌 → 202，错误/缺失 → 401）。
 >
 > **容器健康但站点全部 `auth_failed`**：说明凭据不被站点接受，先看下一节确定该用 Cookie 还是 PAT。
+
+### 只用 compose 文件部署（不 clone 源码）
+
+使用这个项目只需要一个 `docker-compose.yml`，配上自己的 `config.yaml` / `.env` / `data/`：
+
+```text
+/opt/newapi-checkin/
+├── docker-compose.yml     644                 编排（复制下面那段，或用 curl 下载）
+├── .env                   600                 凭据：PANEL_TOKEN / BARK_KEY / SITE_*
+├── config.yaml            644                 应用配置：站点与调度
+└── data/                  10001:10001         持久化：newapi-checkin.db
+```
+
+compose 里的 `./` 全部相对 **compose 文件所在目录**，所以这四样放同一层即可；放 `/opt`、`/srv` 或家目录都行，从哪个目录执行都一样（`docker compose -f /opt/newapi-checkin/docker-compose.yml up -d`）。
+
+下面这段与仓库里的 [`docker-compose.yml`](docker-compose.yml) **完全一致，以仓库文件为准**。仓库更新后要同步，用 `curl -fsSLO https://raw.githubusercontent.com/oner8/newapi-checkin/master/docker-compose.yml` 覆盖即可——个性化内容都不在这个文件里，覆盖不会丢东西。
+
+```yaml
+services:
+  newapi-checkin:
+    # 这是发给使用者的样板：这一个文件 + 自己的 config.yaml / .env / data 即可运行（见 README「只用 compose 文件部署」）。
+    # 镜像从 registry 拉取：首次 `docker compose up -d` 会自动拉，升级要先 `docker compose pull`。
+    # 两个变量可写在 .env 里：
+    #   IMAGE_TAG   固定版本 / 回滚，例如 v1.0.0（不写即 latest）
+    #   IMAGE_REPO  换 registry 或镜像站，例如 registry.cn-hangzhou.aliyuncs.com/<namespace>/newapi-checkin
+    image: "${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}"
+    container_name: newapi-checkin
+    # 凭据与令牌从 .env 注入（对应 config.yaml 里的 ${...} 引用）。程序自己不读 .env，这一项不能省。
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      # 配置文件只读挂载（宿主上需为 644，容器内以非 root 读取）。
+      # 数据库目录持久化到宿主机 ./data —— 注意该目录属主必须是容器内用户 uid 10001，
+      # 否则容器无法创建 newapi-checkin.db：先执行 sudo install -d -o 10001 -g 10001 ./data
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/data
+    ports:
+      # 只绑本机：GET /api/sites、/api/runs 不校验身份，暴露到局域网会泄露站点清单与最近签到结果。
+      # 需要远程查看就放在带认证的反向代理后面（或给这两个接口也加上 admin_token）。
+      - "127.0.0.1:8080:8080"
+    # 让容器内能解析 host.docker.internal 指向宿主机（Linux 上用 docker 网关实现），
+    # 便于把 sites[].proxy 写成 http://host.docker.internal:7890 这类形式。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    # 日志轮转：json-file 是默认驱动且不限大小，长期运行会把宿主机磁盘写满。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      # 与镜像内置的 healthcheck 相同（可省，保留也无害）。
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    # 可选：默认即为 bridge 网络，如需显式声明可取消注释。
+    # network_mode: bridge
+```
+
+**从零到跑起来**：
+
+```bash
+mkdir -p /opt/newapi-checkin && cd /opt/newapi-checkin
+B=https://raw.githubusercontent.com/oner8/newapi-checkin/master
+curl -fsSLO "$B/docker-compose.yml"
+curl -fsSLO "$B/config.example.yaml" && mv config.example.yaml config.yaml
+curl -fsSLO "$B/.env.example"        && mv .env.example .env
+
+vi config.yaml && vi .env        # 填站点与凭据；database.path 保持 /data/newapi-checkin.db 不要改
+chmod 644 config.yaml docker-compose.yml && chmod 600 .env
+sudo install -d -o 10001 -g 10001 ./data
+
+docker compose up -d             # 首次会自动拉镜像（包是公开的，无需 docker login）
+docker compose ps                # 等 STATUS 变成 Up (healthy)
+curl -sS http://127.0.0.1:8080/healthz
+```
+
+**这三行分别是什么**：
+
+| 配置 | 性质 | 作用 |
+| --- | --- | --- |
+| `env_file: .env` | 注入**环境变量**，不是挂载 | 程序用 `os.LookupEnv` 展开 `${SITE_XX_COOKIE}` 等，自己**不读** `.env`；`.env` 也不会出现在容器的文件系统里 |
+| `./config.yaml:/app/config.yaml:ro` | **只读挂载** | 镜像里不含配置（构建时被 `.dockerignore` 排除），必须由宿主机提供；`ro` 保证容器改不了它 |
+| `./data:/data` | **读写挂载** | SQLite 落在 `/data/newapi-checkin.db`，重启/升级不丢；备份就是打包这个目录 |
+
+改完谁生效：改 `.env`（凭据、`PANEL_TOKEN`、`IMAGE_TAG`）要 `docker compose up -d`（环境变量在创建容器时注入，`restart` 不会重读）；改 `config.yaml`（站点、`app.schedule`）要 `docker compose restart`；改 `./data` 里的库不用管。
+
+> 别把 `docker compose config` 的输出贴给别人：它会把 `.env` 里的凭据明文打印出来。只想看解析后的镜像名，用 `docker compose config --images`。
+
+**升级**：
+
+```bash
+docker compose pull && docker compose up -d     # 只升级镜像，compose 文件不用动
+```
+
+- 固定版本 / 回滚：把 `image` 写成 `${IMAGE_TAG:-latest}`，在 `.env` 里写 `IMAGE_TAG=v1.0.0`，改完再执行上面那条。
+- compose 结构变了（例如以后新增挂载）：用上面的 `curl` 覆盖一次即可，个性化内容都在 `.env` / `config.yaml` / `data/` 里。
+- 直接 clone 仓库部署的人：`git pull` 即可——`.env` / `config.yaml` / `data/` 在 `.gitignore` 中，不会被覆盖。
+- 本项目的约定：compose 里新增的配置项一律带 `${VAR:-默认}` 默认值，所以旧文件不同步也能照常运行；真正必须同步的变更会在本节写明。
+
+**常见坑**：
+
+| 现象 | 原因与做法 |
+| --- | --- |
+| `env file ... not found` | `.env` 必须存在（`touch .env` 也行）：它是把凭据注入容器环境的那一步 |
+| 启动报 `环境变量 SITE_XX_COOKIE 未定义` | 程序只用进程环境变量展开 `${...}`，**自己不会读 `.env`**，所以别删 `env_file`；挂载一个凭据文件并不会设置环境变量 |
+| 想用独立文件放凭据 | 用内置的 `<VAR>_FILE` 约定：`environment: - SITE_XX_COOKIE_FILE=/run/secrets/cookie` 并挂载该文件；此时 `.env` 里**不能**再有空的 `SITE_XX_COOKIE=`（空值也算已定义，`_FILE` 不会生效），该文件要对容器内 uid 10001 可读 |
+| 容器起来就退出 / 读不到配置 | `./config.yaml` 不存在时 Docker 会创建一个**同名目录**，务必先 `cp config.example.yaml config.yaml` |
+| `permission denied` 打不开数据库、反复重启 | `./data` 属主必须是 `10001:10001`（`sudo install -d -o 10001 -g 10001 ./data`） |
+| `mount path must be absolute` | 卷的**容器侧**路径必须绝对（`/app/config.yaml`）；`./env:./env` 这类写法会被 daemon 拒绝 |
+| `no matching manifest for linux/arm64` | 目前发布的镜像只有 `linux/amd64`；ARM 服务器需自行 `docker buildx build --platform linux/arm64 -t ghcr.io/oner8/newapi-checkin:latest --push .` |
+| 从宿主机 curl `POST /api/run` 返回 403 | `.env` 里 `PANEL_TOKEN` 留空时只接受 127.0.0.1，而容器看到的来源是网桥网关；填上令牌并带 `X-Admin-Token` |
+
+跑第二份实例（另一组站点）：把整个目录复制一份（目录名不同即可，compose 的项目名/网络名按目录名生成，不会冲突），再改 `container_name` 与端口（如 `127.0.0.1:8081:8080`）。
 
 ## 开发
 
