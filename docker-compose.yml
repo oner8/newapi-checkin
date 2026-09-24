@@ -1,0 +1,29 @@
+services:
+  newapi-checkin:
+    build: .
+    # 镜像名固定为 newapi-checkin（否则默认会是「<项目目录名>-<服务名>」的拼接）
+    image: newapi-checkin
+    container_name: newapi-checkin
+    # 凭据与令牌从 .env 注入（对应 config.yaml 里的 ${...} 引用）。
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      # 配置文件只读挂载（宿主上需为 644，容器内以非 root 读取）。
+      # 数据库目录持久化到宿主机 ./data —— 注意该目录属主必须是容器内用户 uid 10001，
+      # 否则容器无法创建 newapi-checkin.db：先执行 sudo install -d -o 10001 -g 10001 ./data
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/data
+    ports:
+      # 只绑本机：GET /api/sites、/api/runs 不校验身份，暴露到局域网会泄露站点清单与最近签到结果。
+      # 需要远程查看就放在带认证的反向代理后面（或给这两个接口也加上 admin_token）。
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    # 可选：默认即为 bridge 网络，如需显式声明可取消注释。
+    # network_mode: bridge

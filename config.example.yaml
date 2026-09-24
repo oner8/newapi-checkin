@@ -1,0 +1,74 @@
+# newapi-checkin 配置示例
+#
+# 用法：
+#   cp config.example.yaml config.yaml
+# 然后按需修改站点与调度参数。
+#
+# 字段说明：
+#   - 这里列出的字段与 internal/config/config.go 中的结构体一一对应，字段名不要改。
+#   - 所有字符串字段都支持 ${VAR} / ${VAR:-默认值} 形式的环境变量展开，
+#     未定义且没有默认值时会在启动阶段直接报错（并指出是哪个字段）。
+#   - 若设置了 <VAR>_FILE（例如 SITE_EXAMPLE_COOKIE_FILE=/run/secrets/cookie），
+#     则从该文件读取内容（去掉首尾空白），方便配合 Docker secret。
+
+app:
+  timezone: Asia/Shanghai       # 每日触发时间所属时区
+  schedule: "08:00"             # HH:MM
+  jitter_seconds: 600           # 每站每日随机推迟 0~N 秒（确定性哈希，同日同站抖动固定）
+  run_on_start: true            # 容器启动时若当天尚未跑过则补跑
+  concurrency: 3
+  timeout_seconds: 20
+  retries: 2                    # 单站最大重试次数；重试对象：网络错误/5xx/429/响应非 JSON/临时性提示（见 README「重试规则」）
+  retry_backoff_seconds: 60     # 首次重试等待，之后每次翻倍；响应带 Retry-After 时以它为准
+  dry_run: false                # true 时只探测不提交签到
+  # 前置防护挑战的处理方式：solve（默认，自动通过阿里云 WAF 的 acw_sc__v2 挑战）| off（不自动求，判为 blocked）
+  # 注意：写成 "off" 更稳妥——部分 YAML 工具会把裸 off 当布尔值。
+  # waf_challenge: solve
+
+database:
+  path: /data/newapi-checkin.db        # 容器内路径；本地直接 go run / make run-once 请改成 ./data/newapi-checkin.db
+                                # （或任何可写目录），否则会因无法创建 /data 而失败
+
+server:
+  enabled: true
+  addr: ":8080"
+  admin_token: ${PANEL_TOKEN:-}   # 只保护 POST /api/run；为空时只允许 127.0.0.1。GET /healthz、/api/sites、/api/runs、/ 均未鉴权
+
+notify:
+  bark:
+    enabled: true
+    server: https://api.day.app
+    key: ${BARK_KEY:-}
+    group: 签到
+    level: active                 # 有失败时会自动升级为 timeSensitive
+    icon: ""                      # 可选
+    sound: ""                     # 可选
+    mode: summary                 # always=每次都推；failure=只在有失败时推；summary=有失败立即推、全绿时每天推一条
+
+sites:
+  - name: 某某中转
+    base_url: https://api.example.com
+    enabled: true
+    # 部分 fork 改了签到接口路径（且没有状态查询接口）时用这两个字段；标准 new-api 不用写。
+    # checkin_path: /api/user/sign_in   # 默认 /api/user/checkin；查状态与提交都用它
+    # checkin_status: "off"             # 默认 auto（用 checkin_path 预查当月状态）；建议加引号
+    credential:
+      # cookie       适合较老的 new-api 与大部分 fork（需要 session Cookie）
+      # access_token PAT，新版 new-api（v1.0.0-rc.x 起 / 上游 main）必须用这个：
+      #              那里面板鉴权已改为 15 分钟 JWT + HttpOnly Refresh Cookie，
+      #              浏览器里没有可复制的 session Cookie（详见 README「access_token 模式」）
+      type: cookie                # cookie | access_token
+      cookie: ${SITE_EXAMPLE_COOKIE}
+      # token: ${SITE_EXAMPLE_TOKEN}   # type: access_token 时用这个
+      # new_api_user: "123"      # 仅当目标站是老版本/fork 且提示缺头时才需要（新版会忽略）
+    headers: {}                   # 可选，额外请求头，兜底过 WAF（如 User-Agent）
+
+  # 同一个站点的第二个账号（多用户）：base_url 重复写，name 必须与上面不同。
+  # 站点身份用 name 而不是 base_url，签到记录按 (site_name, checkin_date) 唯一，
+  # 因此每个账号每天各占一行、互不覆盖。详见 README「同一站点多个账号（多用户）」。
+  # - name: 某某中转-账号2
+  #   base_url: https://api.example.com
+  #   enabled: true
+  #   credential:
+  #     type: access_token
+  #     token: ${SITE_EXAMPLE_TOKEN_2}

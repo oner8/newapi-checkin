@@ -1,0 +1,11 @@
+# 构建镜像时排除的数据与本地文件，避免把数据库、密钥、编译产物带进构建上下文。
+.git
+.gitignore
+.env
+config.yaml
+data/
+bin/
+*.db
+*.db-wal
+*.db-shm
+*.md
