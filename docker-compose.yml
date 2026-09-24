@@ -1,8 +1,14 @@
 services:
   newapi-checkin:
+    # 本地开发用源码构建；服务器上只拉镜像、不在服务器编译。
     build: .
-    # 镜像名固定为 newapi-checkin（否则默认会是「<项目目录名>-<服务名>」的拼接）
-    image: newapi-checkin
+    # 镜像来自 registry（默认 GHCR），由本机构建后推送。
+    # 服务器必须用 `docker compose pull && docker compose up -d --no-build`：
+    # 否则镜像缺失时 compose 会就地构建，1 核 1G 的机器容易在编译阶段被 OOM Kill。
+    # 两个变量都可写在 .env 里：
+    #   IMAGE_TAG   固定版本 / 回滚，例如 v1.0.0（不写即 latest）
+    #   IMAGE_REPO  换 registry 或镜像站，例如 registry.cn-hangzhou.aliyuncs.com/<namespace>/newapi-checkin
+    image: "${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}"
     container_name: newapi-checkin
     # 凭据与令牌从 .env 注入（对应 config.yaml 里的 ${...} 引用）。
     env_file: .env

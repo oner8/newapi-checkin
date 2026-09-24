@@ -547,6 +547,8 @@ NAME      IMAGE             SERVICE   STATUS          PORTS
 newapi-checkin   newapi-checkin   newapi-checkin   Up (healthy)   127.0.0.1:8080->8080/tcp
 ```
 
+> 上表 IMAGE 列是当时（镜像名还是本地 `newapi-checkin`）的输出。现在镜像名由 `docker-compose.yml` 里的 `${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}` 决定，本地 `docker compose build` 会打上 `ghcr.io/oner8/newapi-checkin:latest` 这个标签。
+
 Dockerfile 为多阶段构建：
 
 - 构建阶段：`golang:1.25-alpine`，`CGO_ENABLED=0`（SQLite 驱动是纯 Go，可静态编译）。
@@ -563,12 +565,19 @@ Dockerfile 为多阶段构建：
 | `RUNTIME_IMAGE` | `alpine:3.20` | 运行用基础镜像，同上 |
 | `VERSION` | `dev` | 写入二进制的版本号（`--version` 可见）|
 
-`docker-compose.yml` 要点：服务名与容器名 `newapi-checkin`、镜像 `newapi-checkin:latest`、`build: .`、`env_file: .env`、`TZ=Asia/Shanghai`、挂载 `./config.yaml:/app/config.yaml:ro` 与 `./data:/data`、`ports: 127.0.0.1:8080:8080`（**只绑本机**，不暴露到局域网）、`restart: unless-stopped`、healthcheck。
+`docker-compose.yml` 要点：服务名与容器名 `newapi-checkin`、镜像 `${IMAGE_REPO:-ghcr.io/oner8/newapi-checkin}:${IMAGE_TAG:-latest}`（默认从 GHCR 拉，`.env` 里可用 `IMAGE_TAG` 固定版本或回滚、用 `IMAGE_REPO` 换 registry）、`build: .`、`env_file: .env`、`TZ=Asia/Shanghai`、挂载 `./config.yaml:/app/config.yaml:ro` 与 `./data:/data`、`ports: 127.0.0.1:8080:8080`（**只绑本机**，不暴露到局域网）、`restart: unless-stopped`、healthcheck。
 
 ```bash
 sudo install -d -o 10001 -g 10001 ./data   # 必须先建好（属主=容器内 uid 10001，见「快速开始」）
+
+# 本地开发：用源码构建后再启动
 docker compose build
 docker compose up -d
+
+# 服务器：不编译源码，只拉镜像（包若为私有，先 docker login ghcr.io）
+docker compose pull
+docker compose up -d --no-build
+
 docker compose logs -f
 ```
 
